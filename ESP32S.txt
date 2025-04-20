@@ -1,0 +1,191 @@
+#include <WiFi.h>
+#include <ThingSpeak.h>
+#include <LiquidCrystal_I2C.h>
+#include <Wire.h>
+
+// WiFi and ThingSpeak settings
+const char* ssid = "SSID"; 
+const char* password = "WiFi_PW"; 
+unsigned long channelID = 2920365;
+const char* apiKey = "7L6HP50CJE8CQ4CK";
+
+// Ultrasonic sensor pins
+#define TRIG_PIN_1 5
+#define ECHO_PIN_1 4
+#define TRIG_PIN_2 23
+#define ECHO_PIN_2 25
+#define TRIG_PIN_3 16
+#define ECHO_PIN_3 17
+
+// LED pins
+#define RED_LED_1 12
+#define GREEN_LED_1 13
+#define BLUE_LED_1 2
+#define RED_LED_2 14
+#define GREEN_LED_2 27
+#define BLUE_LED_2 26
+#define RED_LED_3 15
+#define GREEN_LED_3 0
+#define BLUE_LED_3 35
+
+// Define the I2C address for the LCD
+const int I2C_PINS[][2] = {
+  {21, 22}, // LCD 1: SDA=21, SCL=22
+  {33, 32}, // LCD 2: SDA=33, SCL=32
+  {19, 18}  // LCD 3: SDA=19, SCL=18
+};
+
+// LCD settings
+LiquidCrystal_I2C lcd1(0x27, 16, 2); // LCD 1
+LiquidCrystal_I2C lcd2(0x27, 16, 2); // LCD 2
+LiquidCrystal_I2C lcd3(0x27, 16, 2); // LCD 3
+
+WiFiClient client;
+
+struct Sensor {
+  int trigPin;
+  int echoPin;
+  int redLed;
+  int greenLed;
+  int blueLed;
+  LiquidCrystal_I2C* lcd;
+  int sdaPin;
+  int sclPin;
+  float distance;
+};
+
+Sensor sensors[] = {
+  {TRIG_PIN_1, ECHO_PIN_1, RED_LED_1, GREEN_LED_1, BLUE_LED_1, &lcd1, I2C_PINS[0][0], I2C_PINS[0][1], 0},
+  {TRIG_PIN_2, ECHO_PIN_2, RED_LED_2, GREEN_LED_2, BLUE_LED_2, &lcd2, I2C_PINS[1][0], I2C_PINS[1][1], 0},
+  {TRIG_PIN_3, ECHO_PIN_3, RED_LED_3, GREEN_LED_3, BLUE_LED_3, &lcd3, I2C_PINS[2][0], I2C_PINS[2][1], 0}
+};
+
+void initI2C(int sdaPin, int sclPin) {
+  Wire.end(); // End previous I2C session
+  Wire.begin(sdaPin, sclPin); // Start I2C with new pins
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  for (int i = 0; i < 3; i++) {
+    pinMode(sensors[i].trigPin, OUTPUT);
+    pinMode(sensors[i].echoPin, INPUT);
+  }
+
+  int ledPins[] = {RED_LED_1, GREEN_LED_1, BLUE_LED_1, RED_LED_2, GREEN_LED_2, BLUE_LED_2, RED_LED_3, GREEN_LED_3, BLUE_LED_3};
+  for (int i = 0; i < 9; i++) {
+    pinMode(ledPins[i], OUTPUT);
+    digitalWrite(ledPins[i], LOW); // Turn off all LEDs initially
+  }
+
+  for (int i = 0; i < 3; i++) {
+    initI2C(sensors[i].sdaPin, sensors[i].sclPin);
+    sensors[i].lcd->begin();
+    sensors[i].lcd->backlight();
+    sensors[i].lcd->setCursor(0, 0);
+    sensors[i].lcd->print("Initializing...");
+  }
+
+  Serial.println("Connecting to WiFi...");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("WiFi connected");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+
+  for (int i = 0; i < 3; i++) {
+    initI2C(sensors[i].sdaPin, sensors[i].sclPin);
+    sensors[i].lcd->clear();
+    sensors[i].lcd->setCursor(0, 0);
+    sensors[i].lcd->print("WiFi Connected");
+    sensors[i].lcd->setCursor(0, 1);
+    sensors[i].lcd->print(WiFi.localIP());
+  }
+  delay(2000); // Show IP for 2 seconds
+
+  ThingSpeak.begin(client);
+}
+
+void loop() {
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(sensors[i].trigPin, LOW);
+    delayMicroseconds(2);
+    digitalWrite(sensors[i].trigPin, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(sensors[i].trigPin, LOW);
+
+    long duration = pulseIn(sensors[i].echoPin, HIGH);
+
+    // Calculate distance in cm
+    sensors[i].distance = duration * 0.034 / 2;
+
+    initI2C(sensors[i].sdaPin, sensors[i].sclPin);
+    sensors[i].lcd->clear();
+    sensors[i].lcd->setCursor(0, 0);
+    sensors[i].lcd->print("Distance ");
+    sensors[i].lcd->print(i + 1);
+    sensors[i].lcd->print(":");
+    sensors[i].lcd->setCursor(0, 1);
+    sensors[i].lcd->print(sensors[i].distance);
+    sensors[i].lcd->print(" cm");
+
+    Serial.print("Sensor ");
+    Serial.print(i + 1);
+    Serial.print(" Distance: ");
+    Serial.print(sensors[i].distance);
+    Serial.println(" cm");
+
+    if (sensors[i].distance <= 0 || sensors[i].distance >= 400) { // Invalid distance
+      digitalWrite(sensors[i].redLed, LOW);
+      digitalWrite(sensors[i].greenLed, LOW);
+      digitalWrite(sensors[i].blueLed, HIGH);
+      Serial.print("Sensor ");
+      Serial.print(i + 1);
+      Serial.println(" Invalid distance - Blue LED ON");
+    } else if (sensors[i].distance < 10) { // Distance < 10 cm
+      digitalWrite(sensors[i].redLed, LOW);
+      digitalWrite(sensors[i].greenLed, HIGH);
+      digitalWrite(sensors[i].blueLed, LOW);
+      Serial.print("Sensor ");
+      Serial.print(i + 1);
+      Serial.println(" Distance < 10 cm - Green LED ON");
+    } else { // Distance > 10 cm
+      digitalWrite(sensors[i].redLed, HIGH);
+      digitalWrite(sensors[i].greenLed, LOW);
+      digitalWrite(sensors[i].blueLed, LOW);
+      Serial.print("Sensor ");
+      Serial.print(i + 1);
+      Serial.println(" Distance > 10 cm - Red LED ON");
+    }
+  }
+
+  ThingSpeak.setField(1, sensors[0].distance);
+  ThingSpeak.setField(2, sensors[1].distance);
+  ThingSpeak.setField(3, sensors[2].distance);
+
+  bool validData = true;
+  for (int i = 0; i < 3; i++) {
+    if (sensors[i].distance <= 0 || sensors[i].distance >= 400) {
+      validData = false;
+      break;
+    }
+  }
+
+  if (validData) {
+    int response = ThingSpeak.writeFields(channelID, apiKey);
+    if (response == 200) {
+      Serial.println("Data sent to ThingSpeak");
+    } else {
+      Serial.println("Error sending data: HTTP " + String(response));
+    }
+  } else {
+    Serial.println("Invalid distance(s) - not uploading to ThingSpeak");
+  }
+
+  delay(2000); 
+}
