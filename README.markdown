@@ -1,4 +1,4 @@
-# Car Plate Detection Project
+# Smart Parking System
 
 This document provides instructions for accessing and running the Car Plate Detection project, which includes an ESP32S module, a Python-based license plate detection script using a YOLO model, and a web dashboard for visualization.
 
